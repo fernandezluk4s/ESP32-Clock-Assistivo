@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Painel Assistivo do ESP32</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+    body {
+        margin: 0;
+        padding: 0;
+        font-family: "Segoe UI", Arial, sans-serif;
+        background: #f0f2f5;
+    }
+
+    .header {
+        background: linear-gradient(135deg, #0066ff, #00aaff);
+        color: white;
+        padding: 20px;
+        text-align: center;
+        font-size: 26px;
+        font-weight: bold;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+
+    .card {
+        background: white;
+        margin: 10px 15px; 
+        padding: 20px;
+        border-radius: 16px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+
+    .card-group {
+        display: flex;
+        gap: 15px;
+        margin: 10px 15px; 
+    }
+
+    .card-group > .card {
+        flex: 1;
+        margin: 0; 
+    }
+
+    .title {
+        font-size: 18px;
+        font-weight: 600;
+        color: #333;
+    }
+
+    .value {
+        margin-top: 10px;
+        font-size: 28px;
+        font-weight: bold;
+        color: #0078ff;
+        word-wrap: break-word;
+    }
+
+    .value.small { font-size: 22px; }
+
+    .status-online { color: #00c851; }
+    .status-offline { color: #ff4444; }
+
+    /* Animação suave para eventos */
+    .evento-ativo {
+        animation: pulsar 1.5s ease-in-out infinite;
+        color: #ff6600 !important;
+    }
+
+    @keyframes pulsar {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.6; }
+    }
+
+    #historico {
+        max-height: 220px;
+        overflow-y: auto;
+        white-space: pre-line;
+        font-size: 16px;
+        color: #333;
+        border-top: 1px solid #eee;
+        padding-top: 10px;
+    }
+
+    canvas { max-height: 300px; }
+    
+    .control-button {
+        flex: 1;
+        padding: 12px;
+        border: none;
+        border-radius: 8px;
+        font-size: 16px;
+        font-weight: bold;
+        cursor: pointer;
+        transition: background-color 0.2s;
+    }
+
+    .control-button.restart {
+        background-color: #ff5722;
+        color: white;
+    }
+
+    .control-button.restart:hover {
+        background-color: #e64a19;
+    }
+
+    .control-button.event {
+        background-color: #00bcd4;
+        color: white;
+    }
+
+    .control-button.event:hover {
+        background-color: #0097a7;
+    }
+
+    @media screen and (max-width: 768px) {
+        .header { font-size: 20px; padding: 15px; }
+        .card-group { flex-direction: column; margin: 0; }
+        .card-group > .card { margin: 10px 15px; width: auto; flex: none; }
+        .card > div:nth-child(2) { flex-direction: column; }
+        .control-button { margin-bottom: 10px; }
+    }
+</style>
+</head>
+
+<body>
+
+<div class="header">📱 Painel Assistivo – ESP32</div>
+
+<div class="card-group">
+    <div class="card">
+        <div class="title">🟢 Status do ESP32</div>
+        <div id="statusESP" class="value small status-offline">Offline</div>
+    </div>
+
+    <div class="card">
+        <div class="title">📡 Status do MQTT</div>
+        <div id="statusMQTT" class="value small status-offline">Desconectado</div>
+    </div>
+</div>
+
+<div class="card-group">
+    <div class="card">
+        <div class="title">🕑 Hora Atual</div>
+        <div id="hora" class="value">--:--:--</div>
+    </div>
+
+    <div class="card">
+        <div class="title">🗓️ Data Completa</div>
+        <div id="dataCompleta" class="value small">--/--/----</div>
+    </div>
+</div>
+
+<div class="card-group">
+    <div class="card">
+        <div class="title">🔔 Evento Atual</div>
+        <div id="evento" class="value small">Nenhum evento</div>
+    </div>
+
+    <div class="card">
+        <div class="title">✨ Último Evento</div>
+        <div id="ultimoEvento" class="value small">Nenhum</div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="title">🕹️ Controles Remotos</div>
+    <div style="display: flex; gap: 15px; margin-top: 15px; flex-wrap: wrap;">
+        <button id="btnRestart" class="control-button restart">Reiniciar ESP32</button>
+        <button id="btnEventoManual" class="control-button event">Disparar Evento Manual</button>
+    </div>
+</div>
+
+<div class="card">
+    <div class="title">📊 Gráfico de Ocorrências</div>
+    <canvas id="grafico"></canvas>
+</div>
+
+<div class="card">
+    <div class="title">📜 Histórico de Eventos (Log)</div>
+    <div id="historico"></div>
+</div>
+
+<script>
+// =======================================================
+// VARIÁVEIS GLOBAIS
+// =======================================================
+const client = mqtt.connect("wss://broker.hivemq.com:8884/mqtt");
+
+let lastHeartbeat = 0;
+let currentEventTimeout;
+let lastRecordedEvent = ""; 
+let labels = []; 
+let dados = []; 
+let lastEventMinute = {}; 
+
+// ======================== CONEXÃO MQTT =======================
+client.on("connect", () => {
+    console.log("Conectado ao Broker MQTT");
+    document.getElementById("statusMQTT").innerHTML = "Conectado";
+    document.getElementById("statusMQTT").className = "value small status-online";
+
+    client.subscribe("esp32/relogio/hora");
+    client.subscribe("esp32/relogio/status");
+    client.subscribe("esp32/relogio/evento");
+});
+
+client.on("disconnect", () => {
+    document.getElementById("statusMQTT").innerHTML = "Desconectado";
+    document.getElementById("statusMQTT").className = "value small status-offline";
+});
+
+// ======================== RECEPTOR DE MENSAGENS =======================
+client.on("message", (topic, message) => {
+    message = message.toString();
+    const agora = Date.now();
+
+    // 1. HEARTBEAT
+    if (topic.includes("esp32/relogio")) {
+        lastHeartbeat = agora;
+        
+        const statusEl = document.getElementById("statusESP");
+        if (statusEl.innerHTML !== "Online") {
+             statusEl.innerHTML = "Online";
+             statusEl.className = "value small status-online";
+        }
+    }
+
+    // 2. ATUALIZAÇÃO DA HORA (nunca bloqueia!)
+    if (topic === "esp32/relogio/hora") {
+        document.getElementById("hora").innerHTML = message;
+        updateDataCompleta();
+    }
+
+    // 3. ATUALIZAÇÃO DE EVENTOS (também não bloqueia!)
+    if (topic === "esp32/relogio/evento") {
+        const eventoEl = document.getElementById("evento");
+        eventoEl.innerHTML = message;
+        
+        // Adiciona animação visual sem bloquear
+        eventoEl.classList.add("evento-ativo");
+        
+        // Se for evento novo
+        if (message !== lastRecordedEvent) {
+            lastRecordedEvent = message;
+            adicionarHistorico(message);
+            atualizarGrafico(message, agora); 
+            document.getElementById("ultimoEvento").innerHTML = message;
+        }
+
+        // Limpa evento após 5 segundos (mas não bloqueia nada!)
+        if (currentEventTimeout) clearTimeout(currentEventTimeout);
+        currentEventTimeout = setTimeout(() => {
+            eventoEl.innerHTML = "Nenhum evento";
+            eventoEl.classList.remove("evento-ativo");
+        }, 5000);
+    }
+    
+    // 4. STATUS
+    if (topic === "esp32/relogio/status") {
+        if (message === "Offline") {
+            document.getElementById("statusESP").innerHTML = "Offline";
+            document.getElementById("statusESP").className = "value small status-offline";
+        }
+    }
+});
+
+// =======================================================
+// WATCHDOG
+// =======================================================
+setInterval(() => {
+    const agora = Date.now();
+    const statusEl = document.getElementById("statusESP");
+    
+    if (statusEl.innerHTML === "Online") {
+        if (agora - lastHeartbeat > 4000) {
+            console.warn("Watchdog: ESP32 parou de responder.");
+            statusEl.innerHTML = "Offline";
+            statusEl.className = "value small status-offline";
+        }
+    }
+}, 1000);
+
+// ================= FUNÇÕES AUXILIARES ======================
+
+function updateDataCompleta() {
+    const now = new Date();
+    const options = { weekday: 'long', year: 'numeric', month: 'numeric', day: 'numeric' };
+    let dateStr = now.toLocaleDateString('pt-BR', options);
+    dateStr = dateStr.charAt(0).toUpperCase() + dateStr.slice(1);
+    document.getElementById("dataCompleta").innerHTML = dateStr;
+}
+
+function adicionarHistorico(texto) {
+    let h = document.getElementById("historico");
+    let timestamp = new Date().toLocaleString();
+    h.innerHTML = `${timestamp} → ${texto}\n` + h.innerHTML;
+}
+
+// GRÁFICO
+const ctx = document.getElementById("grafico").getContext("2d");
+const grafico = new Chart(ctx, {
+    type: "bar",
+    data: {
+        labels: labels,
+        datasets: [{
+            label: "Ocorrências",
+            data: dados,
+            backgroundColor: "#0078ff99",
+            borderColor: "#0078ff",
+            borderWidth: 2,
+            borderRadius: 10
+        }]
+    },
+    options: {
+        responsive: true,
+        scales: { y: { beginAtZero: true } },
+        plugins: { legend: { display: false } }
+    }
+});
+
+function atualizarGrafico(evento, timestamp) {
+    const date = new Date(timestamp);
+    const eventKey = evento + "_" + date.getHours() + ":" + date.getMinutes(); 
+    if (lastEventMinute[evento] === eventKey) return;
+
+    lastEventMinute[evento] = eventKey;
+    let index = labels.indexOf(evento);
+    if (index === -1) {
+        labels.push(evento);
+        dados.push(1);
+    } else {
+        dados[index]++;
+    }
+    grafico.update();
+}
+
+// ================= CONTROLES REMOTOS ======================
+
+document.getElementById("btnRestart").addEventListener("click", () => {
+    if (client.connected) {
+        if (confirm("Tem certeza que deseja REINICIAR o ESP32 remotamente?")) {
+            client.publish("esp32/relogio/comando", "RESTART");
+        }
+    } else { alert("Erro: HTML desconectado do MQTT."); }
+});
+
+document.getElementById("btnEventoManual").addEventListener("click", () => {
+    if (client.connected) {
+        const eventText = prompt("Digite a mensagem de alerta (máx. 30 caracteres):");
+        if (eventText && eventText.length > 0 && eventText.length <= 30) {
+            client.publish("esp32/relogio/comando", "EVENTO:" + eventText);
+        }
+    } else { alert("Erro: HTML desconectado do MQTT."); }
+});
+</script>
+
+</body>
+</html>
