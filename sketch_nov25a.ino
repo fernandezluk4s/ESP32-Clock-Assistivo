@@ -43,7 +43,7 @@ const char* mqtt_server = "broker.hivemq.com";
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-// ===================== CONTROLE DE EVENTOS NÃO-BLOQUEANTE ===================
+// ===================== CONTROLE DE ESTADO E EVENTOS ===================
 enum EstadoTela { TELA_RELOGIO, TELA_EVENTO };
 EstadoTela estadoAtual = TELA_RELOGIO;
 
@@ -60,6 +60,11 @@ const unsigned long BUZZER_INTERVALO = 250;
 
 long lastMsg = 0;
 int ultimoMinutoVerificado = -1;
+
+// ===================== CONTROLE DE TEMPO ===================
+// Variável para controlar o atraso do Telegram na inicialização
+unsigned long telegramStartupTime = 0; 
+const unsigned long TELEGRAM_STARTUP_DELAY = 10000; // 10 segundos
 
 // =============== FILA DE MENSAGENS TELEGRAM (NÃO-BLOQUEANTE) ===============
 struct TelegramMessage {
@@ -100,6 +105,12 @@ void processarFilaTelegram() {
   
   // Monta o JSON da mensagem
   String mensagemCompleta = "⚠️ *ALERTA DO RELÓGIO* ⚠️\\n\\n";
+  
+  // Se for a mensagem de startup, mude o emoji e título
+  if (telegramQueue[0].texto.startsWith("Sistema inicializado!")) {
+    mensagemCompleta = "✅ *STATUS DO RELÓGIO* ✅\\n\\n";
+  }
+  
   mensagemCompleta += telegramQueue[0].texto;
   
   // Adiciona timestamp
@@ -179,6 +190,7 @@ void iniciarEvento(String texto) {
   // ADICIONA À FILA DO TELEGRAM (não bloqueia!)
   adicionarTelegramNaFila(texto);
   
+  // Desenha a tela imediatamente
   desenharTelaEvento();
 }
 
@@ -214,6 +226,8 @@ void verificarFimEvento() {
     if (agoraMillis - eventoInicioMillis >= EVENTO_DURACAO) {
       estadoAtual = TELA_RELOGIO;
       eventoAtivo = false;
+      // Força a redesenhar o relógio imediatamente ao sair do evento
+      // (Isso será feito no loop principal)
     }
   }
 }
@@ -232,13 +246,6 @@ void verificarEventos(int h, int m) {
   if (h == 21 && m == 0) { iniciarEvento("Hora da Janta!"); return; }
   if (h == 6  && m == 0) { iniciarEvento("Bom dia!"); return; }
   if (h == 22 && m == 0) { iniciarEvento("Boa noite!"); return; }
-  
-  // Eventos de teste
-  if (h == 20 && m == 10) { iniciarEvento("Evento das 18:27 ativado!"); return; }
-  if (h == 20 && m == 11) { iniciarEvento("Evento das 18:28 chegando no compasso!"); return; }
-  if (h == 20 && m == 12) { iniciarEvento("Evento das 18:29 esta no ar!"); return; }
-  if (h == 20 && m == 13) { iniciarEvento("Evento das 18:30 iniciado!"); return; }
-  if (h == 0 && m == 22) { iniciarEvento("Evento das 18:31 liberado!"); return; }
 }
 
 // ======================= CALLBACK MQTT ================================
@@ -346,9 +353,9 @@ void setup() {
     client.setCallback(callback);
     timeClient.begin();
     
-    // Envia mensagem de inicialização após 3 segundos
-    delay(3000);
-    adicionarTelegramNaFila("Sistema inicializado! ✅");
+    // Registra o momento em que a inicialização de rede e MQTT foi concluída
+    telegramStartupTime = millis();
+    
   } else {
     tft.println("Erro WiFi");
   }
@@ -361,6 +368,13 @@ void loop() {
     iniciarEvento("WiFi PERDIDO!");
     delay(2000);
     ESP.restart();
+  }
+
+  // --- NOVO: Verifica se o atraso de 10 segundos para o Telegram já passou ---
+  if (telegramStartupTime != 0 && millis() - telegramStartupTime >= TELEGRAM_STARTUP_DELAY) {
+    adicionarTelegramNaFila("Sistema inicializado! ✅");
+    // Reseta a variável para não entrar mais neste bloco
+    telegramStartupTime = 0; 
   }
 
   // MQTT
