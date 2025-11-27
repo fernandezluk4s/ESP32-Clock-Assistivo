@@ -9,14 +9,14 @@
 #include <HTTPClient.h>
 
 // ======================= CONFIGURAÇÕES DO WIFI ========================
-const char* ssid = "SpyNet";
-const char* password = "C1@_P1tSt0p5/XXIII";
+const char* ssid = "NOME_WIFI";
+const char* password = "SENHA_WIFI";
 
 // ======================= CONFIGURAÇÕES DO TELEGRAM ====================
 // Obtenha o token com @BotFather no Telegram
 // Obtenha o CHAT_ID com @userinfobot
-#define BOT_TOKEN "8580877246:AAGq7zyIytSuudgmgBL_50aykis13EDeAB8"
-#define CHAT_ID "1102490460"
+#define BOT_TOKEN "CODIGO_DO_BOT"
+#define CHAT_ID "SEU_ID_PESSOAL"
 
 String telegramUrl = "https://api.telegram.org/bot" + String(BOT_TOKEN) + "/sendMessage";
 
