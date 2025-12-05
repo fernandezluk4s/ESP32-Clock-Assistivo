@@ -1,3 +1,11 @@
+// Integrantes do grupo:
+// Ana Beatriz Mendonça
+// Caio Cerny Soares
+// Felipe Domingo da Conceição Frazão da Silva
+// Gabriel de Oliveira Irineu
+// Lucas de Almeida Silva Sigolo Fernandes
+// Mariáh Pires Macário Caldeira Almeida
+
 #include <SPI.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7735.h>
